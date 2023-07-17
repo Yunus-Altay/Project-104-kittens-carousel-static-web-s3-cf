@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  Cloudformation Template for Kittens Carousel static website deploy on s3 through Cloudfront and Route 53
+
+Parameters:
+  DomainName:
+    Description: "Choose a hosted zone ID"
+    Type: AWS::Route53::HostedZone::Id
+  FQDN:
+    Description: "Write your fully qualified domain name"
+    Type: String
+    AllowedPattern: (?!-)[a-zA-Z0-9-.]{1,63}(?<!-)
+
+Resources:
+  WebSiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref FQDN
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+  
+  MyBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebSiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource:
+              !Join #!Join ['', ['arn:aws:s3:::', !Ref WebSiteBucket, '/*'']]
+              - ""
+              - - "arn:aws:s3:::"
+                - !Ref WebSiteBucket
+                - "/*"
+
+  WebSiteCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref FQDN
+      DomainValidationOptions:
+        - DomainName: !Ref FQDN
+          HostedZoneId: !Ref DomainName
+      ValidationMethod: DNS
+
+  WebSiteDistro:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Aliases:
+          - !Ref FQDN
+        Comment: " Cloudfront Distribution pointing to Kittens S3 bucket"
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: none
+          TargetOriginId: myS3Origin
+          ViewerProtocolPolicy: allow-all # redirect-to-https
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - DomainName: !GetAtt WebSiteBucket.DomainName # !Select [2, !Split ["/", !GetAtt WebSiteBucket.WebsiteURL]]
+            Id: myS3Origin
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only #https-only
+        PriceClass: PriceClass_All
+        ViewerCertificate:
+          AcmCertificateArn: !Ref WebSiteCertificate
+          SslSupportMethod: sni-only
+      Tags:
+        - Key: Name
+          Value: KittensCarouselDistro
+
+  WebSiteRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref DomainName
+      Name: !Ref FQDN
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt WebSiteDistro.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2 # This is always the hosted zone ID when you create an alias record that routes traffic to a CloudFront distribution.
+
+  
+Outputs:
+  WebSiteR53DomainName:
+    Description: "Fully Qualified Domain Name of Kittens Carousel Application"
+    Value: !Ref WebSiteRecordSet
+  WebSiteCfEndpoit:
+    Description: "Endpoint for Kittens Cloudfront Distribution"
+    Value: !GetAtt WebSiteDistro.DomainName
+  WebSiteBucket:
+    Description: "Name of S3 Bucket for Kittens Website"
+    Value: !GetAtt WebSiteBucket.WebsiteURL
